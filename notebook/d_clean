@@ -1,0 +1,66 @@
+from pathlib import Path
+
+import pandas as pd
+
+
+project_root = Path(__file__).resolve().parents[1]
+raw_path = project_root / "data" / "raw" / "ds_salaries.csv"
+processed_dir = project_root / "data" / "processed"
+clean_path = processed_dir / "ds_salaries_clean.csv"
+report_path = processed_dir / "cleaning_report.csv"
+
+processed_dir.mkdir(parents=True, exist_ok=True)
+df = pd.read_csv(raw_path)
+rows_imported = len(df)
+
+df = df.loc[:, ~df.columns.str.match(r"^Unnamed")]
+df.columns = df.columns.str.strip().str.lower()
+
+numeric_columns = ["work_year", "salary", "salary_in_usd", "remote_ratio"]
+text_columns = [column for column in df.columns if column not in numeric_columns]
+df[text_columns] = df[text_columns].apply(lambda column: column.str.strip())
+df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, errors="coerce")
+
+required_columns = [
+	"work_year",
+	"experience_level",
+	"employment_type",
+	"job_title",
+	"salary",
+	"salary_currency",
+	"salary_in_usd",
+	"employee_residence",
+	"remote_ratio",
+	"company_location",
+	"company_size",
+]
+missing_required = df[required_columns].isna().any(axis=1)
+invalid_salary = (df["salary"] <= 0) | (df["salary_in_usd"] <= 0)
+invalid_remote_ratio = ~df["remote_ratio"].isin([0, 50, 100])
+invalid_rows = missing_required | invalid_salary | invalid_remote_ratio
+duplicate_rows = int(df.duplicated().sum())
+
+df = df.loc[~invalid_rows].drop_duplicates().reset_index(drop=True)
+
+cleaning_report = pd.DataFrame(
+	{
+		"metric": [
+			"rows imported",
+			"duplicate rows removed",
+			"invalid rows removed",
+			"rows exported",
+		],
+		"value": [rows_imported, duplicate_rows, int(invalid_rows.sum()), len(df)],
+	}
+)
+
+assert not df.isna().any().any()
+assert not df.duplicated().any()
+assert df["salary"].gt(0).all() and df["salary_in_usd"].gt(0).all()
+assert df["remote_ratio"].isin([0, 50, 100]).all()
+
+df.to_csv(clean_path, index=False)
+cleaning_report.to_csv(report_path, index=False)
+
+print(cleaning_report.to_string(index=False))
+print(f"Saved cleaned data to {clean_path}")
